@@ -34,7 +34,7 @@ def sample_even_pcd(pcd, N=10000, bins=20, bottom=0.0):
     return pcd[clip_idx]
 
 
-def get_samples(building_model, floorplan3d, intersection, pcd, N=10000, bottom_buffer=2.0):
+def get_samples(building_model, floorplan3d, intersection, pcd, N=10000, bottom_buffer=0.0, top_buffer=0.0):
     """_summary_
 
     Args:
@@ -43,7 +43,8 @@ def get_samples(building_model, floorplan3d, intersection, pcd, N=10000, bottom_
         intersection (trimesh.Trimesh): _description_
         pointcloud (laspy): _description_
         N (int, optional): _description_. Defaults to 10000.
-        margin (float, optional): _description_. Defaults to 2.0.
+        bottom_buffer (float, optional): _description_. Defaults to 0.0.
+        top_buffer (float, optional): _description_. Defaults to 0.0.
 
     Returns:
         samples_building_model (np.array(N,3)),
@@ -67,13 +68,14 @@ def get_samples(building_model, floorplan3d, intersection, pcd, N=10000, bottom_
         samples_intersection = None
 
     pcd = pcd[np.where(pcd.z > building_model.vertices.min(axis=0)[2] + bottom_buffer)]
+    pcd = pcd[np.where(pcd.z < building_model.vertices.max(axis=0)[2] - top_buffer)]
     pcd = pcd[np.random.choice(len(pcd), min(N, len(pcd)), replace=False)]
 
     samples_pointcloud = np.array([pcd.x, pcd.y, pcd.z]).T
     return samples_building_model, samples_floorplan3d, samples_intersection, samples_pointcloud
 
 
-def optimal_intersection_height(samples_building_model, samples_floorplan3d, samples_intersection, samples_pointcloud, stepsize=0.2, smooth=False):
+def optimal_intersection_height(samples_building_model, samples_floorplan3d, samples_intersection, samples_pointcloud, stepsize=0.2, bottom_buffer=0.0, top_buffer=0.0, smooth=False):
     """_summary_
 
     Args:
@@ -92,8 +94,8 @@ def optimal_intersection_height(samples_building_model, samples_floorplan3d, sam
         steps: (np.array(M,))
     """
     # mean height from the building model ground
-    min_height = (samples_building_model.min(axis=0)[2] // stepsize) * stepsize
-    max_height = (samples_building_model.max(axis=0)[2] // stepsize) * stepsize
+    min_height = (samples_building_model.min(axis=0)[2] // stepsize) * stepsize + bottom_buffer
+    max_height = (samples_building_model.max(axis=0)[2] // stepsize) * stepsize - top_buffer
 
     steps = np.arange(min_height, max_height, stepsize)
     scores = np.zeros_like(steps)
@@ -136,17 +138,18 @@ def optimal_intersection_height(samples_building_model, samples_floorplan3d, sam
     return height, score, scores, steps
 
 
-def intersect(out_folder, idx, dataset='Amsterdam', stepsize=0.1, N=10000, improvement_threshold=0.0, bottom_buffer=3.0, smooth=True, city_model=None, city_map=None, city_outline=None):
+def intersect(out_folder, idx, dataset='Amsterdam', stepsize=0.1, N=10000, improvement_threshold=0.0, bottom_buffer=0.0, top_buffer=0.0, smooth=True, city_model=None, city_map=None, city_outline=None):
     """_summary_
 
     Args:
-        out_folder (str): 
         idx (list): List of strings containing building idx for the dataloader
+        out_folder (str):  Output folder
         dataset (str, optional): Switch for different datasets. Defaults to 'Amsterdam'.
         stepsize (float, optional): Defines the interval to check the intersection. Defaults to 0.1.
         N (int, optional): Number of samples. Defaults to 10000.
         improvement_threshold (float, optional): Threshold to determine when the improvement is good enough. Defaults to 0.0.
-        bottom_buffer (float, optional): Defines the relative lowest intersection height. Defaults to 3.0.
+        bottom_buffer (float, optional): Defines the relative lowest intersection height with respect to the 3dbag bottom. Defaults to 0.0.
+        top_buffer (float, optional): Defines the highest intersection height with respect to the 3dbag top. Defaults to 0.0.
         buffer (float, optional): _description_. Defaults to 3.0.
         city_model (cjio.cityjson.CityJSON, optional): City model Defaults to None.
         city_map (list[list[list[]]], optional): lists containing building floorplans. Defaults to None.
@@ -159,6 +162,7 @@ def intersect(out_folder, idx, dataset='Amsterdam', stepsize=0.1, N=10000, impro
     results = []
 
     for i, id in enumerate(idx):
+        print(f'Processing file {i} | bag_id {id} | ', end='')
         # Load building data
         wall, roof, floorplan, outline, pcd = dataloader.get_item(id, city_model=city_model, city_map=city_map, city_outline=city_outline, dataset=dataset, return_aer=True, center=False)
 
@@ -166,7 +170,6 @@ def intersect(out_folder, idx, dataset='Amsterdam', stepsize=0.1, N=10000, impro
         floorplan3d = floorplan3dfier(floorplan, bottom_plane=False, top_plane=False, bottom=wall.vertices.min(axis=0)[2], top=wall.vertices.max(axis=0)[2])
 
         # Create a 3D version of the intersection
-
         try:
             intersection = get_intersection(floorplan, outline, 0)
         except:
@@ -180,8 +183,9 @@ def intersect(out_folder, idx, dataset='Amsterdam', stepsize=0.1, N=10000, impro
 
         # Compute the optimal intersection height
         start = timer()
-        optimal_height, intersected_ann_score, _, _ = optimal_intersection_height(samples_wall, samples_floorplan3d, samples_intersection, samples_pointcloud, stepsize=stepsize, smooth=smooth)
-        time = timer() - start
+        optimal_height, intersected_ann_score, _, _ = optimal_intersection_height(samples_wall, samples_floorplan3d, samples_intersection, samples_pointcloud, stepsize=stepsize, bottom_buffer=bottom_buffer, top_buffer=top_buffer, smooth=smooth)
+        time = round(timer() - start, 3)
+        print(f'finished in {time}')
 
         # If improvement is bigger than a threshold, export new building
         if (building_ann_score - intersected_ann_score) > improvement_threshold:
@@ -208,9 +212,8 @@ def intersect(out_folder, idx, dataset='Amsterdam', stepsize=0.1, N=10000, impro
         trimesh.exchange.export.export_mesh(full_building, os.path.join(out_folder, id + '.obj'))
 
         # Log results
-        result = [id, intersected_ann_score, len(full_building.facets), full_building.faces.shape[0], time]
+        result = [id, intersected_ann_score, len(full_building.facets), full_building.faces.shape[0], optimal_height, time]
         results.append(result)
-        print(i, result, optimal_height)
 
-    results_summary = pd.DataFrame(results, columns = ['id', 'intersected_ann_score', 'intersected_facets', 'intersected_triangles', 'time']).set_index('id')
+    results_summary = pd.DataFrame(results, columns = ['id', 'intersected_ann_score', 'intersected_facets', 'intersected_triangles', 'height', 'time']).set_index('id')
     return results_summary
