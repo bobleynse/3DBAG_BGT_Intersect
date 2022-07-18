@@ -8,10 +8,17 @@ This repository computes the optimial intersection height between 3DBAG building
 cjio
 laspy
 numpy
+open3d
+scipy
 shapely
 trimesh
 vedo
 ```
+
+## Method
+<p align="center">
+  <img src="docs/intersection_graph.png" width="60%" />
+</p>
 
 ## License
 
