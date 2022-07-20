@@ -109,7 +109,9 @@ def get_intersection(floorplan, outline, height=5):
         try:
             vertices, faces = trimesh.creation.triangulate_polygon(intersection_part)
             vertices = np.hstack((vertices, np.ones((vertices.shape[0], 1)) * height))
-            intersections_up.append(trimesh.Trimesh(vertices, faces))
+            mesh = trimesh.Trimesh(vertices, faces)
+            mesh.invert()
+            intersections_up.append(mesh)
         except:
             print('ERROR: in shapely intersection down')
 
@@ -126,7 +128,8 @@ def get_intersection(floorplan, outline, height=5):
         try:
             vertices, faces = trimesh.creation.triangulate_polygon(intersection_part)
             vertices = np.hstack((vertices, np.ones((vertices.shape[0], 1)) * height))
-            intersections_down.append(trimesh.Trimesh(vertices, faces))
+            mesh = trimesh.Trimesh(vertices, faces)
+            intersections_down.append(mesh)
         except:
             print('ERROR: in shapely intersection down')
     if len(intersections_down) > 0:

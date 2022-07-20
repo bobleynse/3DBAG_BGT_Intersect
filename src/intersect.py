@@ -138,7 +138,7 @@ def optimal_intersection_height(samples_building_model, samples_floorplan3d, sam
     return height, score, scores, steps
 
 
-def intersect(out_folder, idx, dataset='Amsterdam', stepsize=0.1, N=10000, improvement_threshold=0.0, bottom_buffer=0.0, top_buffer=0.0, smooth=True, city_model=None, city_map=None, city_outline=None):
+def intersect(out_folder, idx, dataset_root, stepsize=0.1, N=10000, improvement_threshold=0.0, bottom_buffer=0.0, top_buffer=0.0, smooth=True, city_model=None, city_map=None, city_outline=None):
     """_summary_
 
     Args:
@@ -164,7 +164,7 @@ def intersect(out_folder, idx, dataset='Amsterdam', stepsize=0.1, N=10000, impro
     for i, id in enumerate(idx):
         print(f'Processing file {i} | bag_id {id} | ', end='')
         # Load building data
-        wall, roof, floorplan, outline, pcd = dataloader.get_item(id, city_model=city_model, city_map=city_map, city_outline=city_outline, dataset=dataset, return_aer=True, center=False)
+        wall, roof, floorplan, outline, pcd = dataloader.get_item(id, city_model=city_model, city_map=city_map, city_outline=city_outline, dataset_root=dataset_root, return_aer=True, center=False)
 
         # Create a 3D version of the footprint
         floorplan3d = floorplan3dfier(floorplan, bottom_plane=False, top_plane=False, bottom=wall.vertices.min(axis=0)[2], top=wall.vertices.max(axis=0)[2])
@@ -179,16 +179,18 @@ def intersect(out_folder, idx, dataset='Amsterdam', stepsize=0.1, N=10000, impro
         samples_wall, samples_floorplan3d, samples_intersection, samples_pointcloud = get_samples(trimesh.util.concatenate(wall, roof), floorplan3d, intersection, pcd, N=N, bottom_buffer=bottom_buffer)
         
         # Compute the original ann score
-        building_ann_score = average_nearest_neighbour(samples_pointcloud, wall, N=N)
+        bag_ann_score = average_nearest_neighbour(samples_pointcloud, wall, N=N)
 
         # Compute the optimal intersection height
         start = timer()
         optimal_height, intersected_ann_score, _, _ = optimal_intersection_height(samples_wall, samples_floorplan3d, samples_intersection, samples_pointcloud, stepsize=stepsize, bottom_buffer=bottom_buffer, top_buffer=top_buffer, smooth=smooth)
         time = round(timer() - start, 3)
         print(f'finished in {time}')
+        improvement = (intersected_ann_score - bag_ann_score) / bag_ann_score
+        print(improvement)
 
         # If improvement is bigger than a threshold, export new building
-        if (building_ann_score - intersected_ann_score) > improvement_threshold:
+        if (bag_ann_score - intersected_ann_score) > improvement_threshold:
             floorplan3d = floorplan3dfier(floorplan, bottom_plane=False, top_plane=False, bottom=wall.vertices.min(axis=0)[2], top=optimal_height)
             output_wall = merge_wall_and_floorplan3d(wall, floorplan3d, intersection_height=optimal_height)
             intersection = get_intersection(floorplan, outline, optimal_height)
@@ -197,23 +199,23 @@ def intersect(out_folder, idx, dataset='Amsterdam', stepsize=0.1, N=10000, impro
         else:
             optimal_height = None
             output_wall = wall
-            intersected_ann_score = building_ann_score
+            intersected_ann_score = bag_ann_score
 
         # Add colors
         add_color_to_mesh(output_wall, [1.0, 1.0, 1.0])
         add_color_to_mesh(roof, [1.0, 0.0, 0.0])
 
         if optimal_height and intersection:
-                add_color_to_mesh(intersection, [1.0, 1.0, 0.0])
-                output_wall = trimesh.util.concatenate([output_wall, intersection])
+            add_color_to_mesh(intersection, [1.0, 1.0, 0.0])
+            output_wall = trimesh.util.concatenate([output_wall, intersection])
         full_building = trimesh.util.concatenate([output_wall, roof])
 
         # Write new mesh
-        trimesh.exchange.export.export_mesh(full_building, os.path.join(out_folder, id + '.obj'))
+        trimesh.exchange.export.export_mesh(full_building, os.path.join(out_folder, id + '.ply'))
 
         # Log results
-        result = [id, intersected_ann_score, len(full_building.facets), full_building.faces.shape[0], optimal_height, time]
+        result = [id, bag_ann_score, intersected_ann_score, improvement, len(full_building.facets), full_building.faces.shape[0], optimal_height, time]
         results.append(result)
 
-    results_summary = pd.DataFrame(results, columns = ['id', 'intersected_ann_score', 'intersected_facets', 'intersected_triangles', 'height', 'time']).set_index('id')
+    results_summary = pd.DataFrame(results, columns = ['id', 'bag_ann_score', 'intersected_ann_score', 'improvement', 'intersected_facets', 'intersected_triangles', 'height', 'time']).set_index('id')
     return results_summary

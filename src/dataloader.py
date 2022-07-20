@@ -22,7 +22,7 @@ def get_floorplan_from_mesh(mesh):
     return [[list(node) for node in part] for part in floorplan]
 
 
-def get_item(id, city_model=None, city_map=None, city_outline=None, return_aer=False, dataset='Amsterdam', center=True):
+def get_item(id, dataset_root, city_model=None, city_map=None, city_outline=None, return_aer=False, center=True):
     """_summary_
 
     Args:
@@ -34,79 +34,26 @@ def get_item(id, city_model=None, city_map=None, city_outline=None, return_aer=F
     Returns:
         trimesh.Trimesh, trimesh.Trimesh, list[list[list]], shapely.multipolygon, laspy : wall, roof, floorplan, outline, pcd
     """
-    if dataset == 'Toy':
-        like_bag_root = 'C:/Users/boble/Documents/AI-year2/Thesis/data/evaluation/toy_like_bag'
-        pcd_root = 'C:/Users/boble/Documents/AI-year2/Thesis/data/evaluation/clouds'
-        # pcd_root = 'D:/datasets/Toy/cloud_mf_1'
-        gt_root = 'C:/Users/boble/Documents/AI-year2/Thesis/data/evaluation/references'
+    assert city_model, 'city_model required for Amsterdam dataset'
+    assert city_map, 'city_map required for Amsterdam dataset'
+    assert city_outline, 'city_outline required for Amsterdam dataset'
 
-        # Load floorplan
-        gt_mesh = trimesh.exchange.load.load(os.path.join(gt_root, id + '.obj'), force='mesh')
-        floorplan = get_floorplan_from_mesh(gt_mesh)
+    pcd_aer_dir = 'D:/datasets/Amsterdam/aerial/'
 
-        # Load roof and wall
-        building = trimesh.exchange.load.load(os.path.join(like_bag_root, id + '.obj'))
-        for t in building.geometry.values():
-            if np.array_equal(t.visual.material.main_color, np.array([255, 255, 255, 255])):
-                wall = t
-            elif np.array_equal(t.visual.material.main_color, np.array([255, 0, 0, 255])):
-                roof = t
+    # Load building data
+    building = city_model.get_cityobjects(type=['building', 'buildingpart'])[f'NL.IMBAG.Pand.{id}-0']
+    _, wall, roof = geometry_part_to_trimesh(building)
+    floorplan = city_map[id]['floorplan']
+    outline = city_outline[id]['outline']
+    pcd = laspy.read(os.path.join(dataset_root, id + '.laz'))
 
-        # Load outline
-        building25 = trimesh.util.concatenate(wall, roof)
-        outline = trimesh.path.polygons.projected(building25, normal=[0,0,1])
-        outline = np.round(np.array(outline.exterior.xy).T, 3).reshape(1,-1, 2).tolist()
+    if return_aer:
+        pcd_aer = laspy.read(os.path.join(pcd_aer_dir, id + '.laz'))
 
-        # Load pcd
-        pcd = laspy.read(os.path.join(pcd_root, id + '.laz'))
+        pcd_aer.red *= 256
+        pcd_aer.green *= 256
+        pcd_aer.blue *= 256
 
-    elif dataset == 'BuildingNet':
-        gt_root = 'D:/datasets/BuildingNet/gt'
-        pcd_root = 'D:/datasets/BuildingNet/cloud'
-
-        # Load pcd
-        pcd = laspy.read(os.path.join(pcd_root, id + '.laz'))
-
-        # Load floorplan
-        gt_mesh = trimesh.exchange.load.load(os.path.join(gt_root, id + '.obj'), force='mesh')
-        floorplan = get_floorplan_from_mesh(gt_mesh)
-        wall = None
-        roof = None
-
-        # Compute outline
-        try:
-            outline = trimesh.path.polygons.projected(gt_mesh, normal=[0,0,1])
-            outline = np.round(np.array(outline.exterior.xy).T, 3).reshape(1,-1, 2).tolist()
-        except:
-            print('outline failed')
-            outline = np.array([[[]]])
-
-
-    elif dataset == 'Amsterdam':
-        assert city_model, 'city_model required for Amsterdam dataset'
-        assert city_map, 'city_map required for Amsterdam dataset'
-        assert city_outline, 'city_outline required for Amsterdam dataset'
-
-        pcd_dir = 'D:/datasets/Amsterdam/filtered/'
-        pcd_aer_dir = 'D:/datasets/Amsterdam/aerial/'
-
-        # Load building data
-        building = city_model.get_cityobjects(type=['building', 'buildingpart'])[f'NL.IMBAG.Pand.{id}-0']
-        _, wall, roof = geometry_part_to_trimesh(building)
-        floorplan = city_map[id]['floorplan']
-        outline = city_outline[id]['outline']
-        pcd = laspy.read(os.path.join(pcd_dir, id + '.laz'))
-
-        if return_aer:
-            pcd_aer = laspy.read(os.path.join(pcd_aer_dir, id + '.laz'))
-
-            pcd_aer.red *= 256
-            pcd_aer.green *= 256
-            pcd_aer.blue *= 256
-
-    else:
-        print(f'Type {type} unknown')
-        # return None, None, None
 
     if center:
         mean = np.array([np.array(pcd.x).mean(), np.array(pcd.y).mean(), np.array(pcd.z).mean()])

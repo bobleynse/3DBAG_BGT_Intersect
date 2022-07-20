@@ -1,8 +1,11 @@
 import trimesh
+import numpy as np
 
 from src.scrapers.bag3d_scraper import get_surfaces
 from vedo.shapes import Mesh
 from vedo import merge
+
+from cjio.models import Geometry
 
 
 def to_vedo_surface(surfaces):
@@ -67,3 +70,29 @@ def geometry_part_to_trimesh(city_object, lod=2.2):
     
     else:
         return None, None, None
+
+
+def trimesh_to_geometry(mesh, lod=5.0):
+    """
+    Args:
+        mesh (trimesh.Trimesh): Building model
+
+    Returns:
+        cjio.models.Geometry: Building model
+    """
+    geom = Geometry(type='Solid', lod=lod)
+
+    # Obtain boundaries
+    boundaries = mesh.triangles.reshape(-1, 1, 3, 3).tolist()
+    geom.boundaries.append(boundaries)
+
+    # Obtain surfaces (roof and wall only) from colors
+    C = mesh.visual.face_colors # All colors
+    r = np.array([255, 0, 0]) # roof color
+    mask = np.where(((C[:,0] == r[0]) & (C[:,1] == r[1]) & (C[:,2] == r[2])), True, False)
+    space = np.arange(mesh.faces.shape[0])
+
+    # Add surface info to geometry
+    geom.surfaces[0] = {'surface_idx': np.vstack((np.zeros_like(space[np.logical_not(mask)]), space[np.logical_not(mask)])).T.tolist(), 'type': 'WallSurface'}
+    geom.surfaces[1] = {'surface_idx': np.vstack((np.zeros_like(space[mask]), space[mask])).T.tolist(), 'type': 'RoofSurface'}
+    return geom
